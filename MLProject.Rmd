@@ -1,0 +1,96 @@
+---
+title: "Marchine Learning Predictions for Weight Lifting Exercises"
+date: "March 2015"
+output: html_document
+---
+## Synopsis
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.  This project uses data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants.  They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. The goal of this project is to predict the manner in which they did the exercise.
+
+Note: The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har.  Also, the majority of the R code in this report will be hidden, but is available to be seen for reproducibility in the R markdown file posted at https://github.com/sruffer/ML_Project.  
+
+## Getting and Cleaning the Data
+After downloading the Training and Test data, the training set was examined for data quality.  67 columns contained mostly "NAs" and an additional 33 columns contained mostly blanks, so they were removed.  Additionally, new_window was removed due to its near-zero variance and the columns related to row or test indicators, users, and time stamps were also removed.  The remaining 52 columns which were used as model predictors can be seen in Figure A1 in the Appendix.
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+suppressPackageStartupMessages(library(caret))
+suppressPackageStartupMessages(library(AppliedPredictiveModeling))
+
+setInternet2(use = TRUE)
+fileUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+if (!file.exists("./pml-training.csv")) {
+    download.file(fileUrl, destfile = "./pml-training.csv")
+}
+fileUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+if (!file.exists("./pml-testing.csv")) {
+    download.file(fileUrl, destfile = "./pml-testing.csv")
+}
+traindata <- read.csv("pml-training.csv")
+testdata <- read.csv("pml-testing.csv")
+
+# Remove columns with NAs
+cols <- vector()
+nas <- vector()
+for(i in 1:160) {
+    count <- 0
+    count <- length(which(is.na(traindata[,i])))
+    cols <- c(cols,i)
+    nas <- c(nas,count)
+}
+df.na <- data.frame(cols,nas)
+#length(df.na$cols[df.na$nas>0]) # count is 67 columns
+subtrain <- traindata[,-df.na$cols[df.na$nas>0]]
+
+# Remove columns with blanks
+cols <- vector()
+blanks <- vector()
+for(i in 1:93) {
+    count <- 0
+    count <- length(which(subtrain[,i]==""))
+    cols <- c(cols,i)
+    blanks <- c(blanks,count)
+}
+df.blanks <- data.frame(cols,blanks)
+#length(df.blanks$cols[df.blanks$blanks>0]) # count is 33 columns
+subtrain <- subtrain[,-df.blanks$cols[df.blanks$blanks>0]]
+
+# Remove near zero variance (new_window), X and user name and time columns
+nsv<-nearZeroVar(subtrain,saveMetrics=TRUE)
+subtrain <- subtrain[,-c(1:7)]
+```
+
+## Building the Model
+In order to cross-validate within the Training data, that set was split out to a Training set (.75) and a Validation set (.25).  Additionally, cross validation with 10 folds was utilized as a trainControl setting.  After experimenting with various boosting and forest models on a random subset of 1000 rows of data, the chosen model was GBM (boosting with trees).  GBM and RF had similar results, but GBM ran much faster on the full set of Training data.
+```{r,echo=FALSE}
+# Create training and validation sets from subtrain
+set.seed(2015)
+inTrain <- createDataPartition(y=subtrain$classe,
+                               p=0.75, list=FALSE)
+training <- subtrain[inTrain,]
+validation <- subtrain[-inTrain,]
+```
+```{r,message=FALSE,warning=FALSE}
+suppressPackageStartupMessages(library(gbm))
+fitControl <- trainControl(method = "cv",number = 10)
+model_gbm_cv <- train(classe ~ ., data = training, method = "gbm",
+                      verbose = FALSE, trControl = fitControl)
+model_gbm_cv
+```
+
+## Assessing the Model Performance
+Based on the model results above, the expected out of sample error is roughly 4% (1 minus the accuracy of the optimal model).  This was validated by predicting against the Validation data set and looking at the confusion matrix results.
+```{r}
+confusionMatrix(validation$classe,predict(model_gbm_cv,validation))$overall[1]
+confusionMatrix(validation$classe,predict(model_gbm_cv,validation))$table
+```
+Additionally, this model also correctly predicted 20 of 20 values in the formal Test data set.  Those results are excluded from this report so as not to provide the answers to future Practical Machine Learning students.
+
+## Bonus: Lesson Learned
+While experimenting with models, the column X was inadvertently left in the Training data and the models were resulting in 99.9% accuracy against both the Training and Validation sets, but only produced A as the answer for all 20 cases in the Test set.  The varImp function revealed that X was the *only* important factor in those models.  This plot shows why:
+```{r,echo=FALSE}
+with(traindata,plot(classe,X, xlab="Classe", ylab="X"))
+```
+\
+## Appendix
+*Figure A1 - Model Predictors* 
+```{r, echo=FALSE}
+names(subtrain[1:52])
+```
